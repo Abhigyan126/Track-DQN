@@ -22,7 +22,7 @@ clock = pygame.time.Clock()
 # Load images (you'll need to add these to your project)
 try:
     CAR_IMG = pygame.image.load("car.png")  # Add a car.png to your project
-    CAR_IMG = pygame.transform.scale(CAR_IMG, (30, 15))
+    CAR_IMG = pygame.transform.scale(CAR_IMG, (30, 30))
 except:
     CAR_IMG = None  # Will use polygon if image not found
 
@@ -79,16 +79,41 @@ class Environment:
     def generate_road(self):
         outer_points = []
         inner_points = []
-        noise_offset = random.uniform(0, 100)
         
-        # Generate road points with continuous noise
-        for i in range(POINTS + 1):  # +1 to ensure closure
+        # Multiple noise offsets for different layers of variation
+        base_noise_offset = random.uniform(0, 100)
+        secondary_noise_offset = random.uniform(0, 100)
+        variation_noise_offset = random.uniform(0, 100)
+        
+        # Base radius variation
+        base_radius_variation = random.uniform(0.8, 1.2)
+        base_radius = RADIUS * base_radius_variation
+        
+        for i in range(POINTS + 1):
             angle = 2 * math.pi * i / POINTS
-            noise = pnoise1((i * 0.1 + noise_offset)) * 40
             
-            # Add noise to radius but maintain road shape
-            current_radius = RADIUS + noise
+            # Combine multiple layers of noise
+            primary_noise = pnoise1((i * 0.1 + base_noise_offset)) * 60
+            secondary_noise = pnoise1((i * 0.2 + secondary_noise_offset)) * 30
+            variation_noise = pnoise1((i * 0.05 + variation_noise_offset)) * 20
             
+            # Combine noise layers with different frequencies
+            combined_noise = (primary_noise + 
+                            secondary_noise * 0.5 + 
+                            variation_noise * 0.3)
+            
+            # Add some random bulges or pinches
+            if random.random() < 0.1:  # 10% chance for each point
+                bulge = random.uniform(-30, 30)
+                combined_noise += bulge
+            
+            # Calculate current radius with all variations
+            current_radius = base_radius + combined_noise
+            
+            # Ensure minimum track size
+            current_radius = max(current_radius, ROAD_WIDTH * 2)
+            
+            # Generate outer and inner points
             outer_x = CENTER[0] + (current_radius + ROAD_WIDTH / 2) * math.cos(angle)
             outer_y = CENTER[1] + (current_radius + ROAD_WIDTH / 2) * math.sin(angle)
             outer_points.append((outer_x, outer_y))
@@ -97,11 +122,33 @@ class Environment:
             inner_y = CENTER[1] + (current_radius - ROAD_WIDTH / 2) * math.sin(angle)
             inner_points.append((inner_x, inner_y))
         
-        # Ensure the road is closed by connecting back to start
+        # Ensure the track is closed by connecting back to start
         outer_points[-1] = outer_points[0]
         inner_points[-1] = inner_points[0]
         
-        return outer_points, inner_points
+        # Smooth out the track slightly to avoid sharp corners
+        smoothed_outer = []
+        smoothed_inner = []
+        
+        for i in range(len(outer_points)):
+            # Get points for smoothing (considering wrap-around)
+            prev_i = (i - 1) % (len(outer_points) - 1)
+            next_i = (i + 1) % (len(outer_points) - 1)
+            
+            # Simple averaging for smoothing
+            smooth_outer_x = (outer_points[prev_i][0] + outer_points[i][0] + outer_points[next_i][0]) / 3
+            smooth_outer_y = (outer_points[prev_i][1] + outer_points[i][1] + outer_points[next_i][1]) / 3
+            smoothed_outer.append((smooth_outer_x, smooth_outer_y))
+            
+            smooth_inner_x = (inner_points[prev_i][0] + inner_points[i][0] + inner_points[next_i][0]) / 3
+            smooth_inner_y = (inner_points[prev_i][1] + inner_points[i][1] + inner_points[next_i][1]) / 3
+            smoothed_inner.append((smooth_inner_x, smooth_inner_y))
+        
+        # Ensure smoothed track is also closed
+        smoothed_outer[-1] = smoothed_outer[0]
+        smoothed_inner[-1] = smoothed_inner[0]
+        
+        return smoothed_outer, smoothed_inner
     
     def reset(self):
         self.outer_points, self.inner_points = self.generate_road()
