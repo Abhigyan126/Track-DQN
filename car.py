@@ -8,17 +8,22 @@ import torch.nn.functional as F
 from collections import deque
 from noise import pnoise1
 import os
+
 pygame.init()
+
 WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800
 GAME_WIDTH, GAME_HEIGHT = 2400, 1600
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 pygame.display.set_caption("Enhanced Self-driving Car with Deep Q-Learning")
+
 clock = pygame.time.Clock()
+
 try:
     CAR_IMG = pygame.image.load("car.png")
     CAR_IMG = pygame.transform.scale(CAR_IMG, (30, 30))
 except:
     CAR_IMG = None
+
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 GRAY = (100, 100, 100)
@@ -33,56 +38,46 @@ ROAD_WIDTH = 100
 POINTS = 120
 MAX_STEPS = 2000
 RAY_LENGTH = 200
+
 class DeepQNetwork(nn.Module):
+
     def __init__(self, input_size, output_size):
         super(DeepQNetwork, self).__init__()
-        self.input_size = input_size
         self.fc1 = nn.Linear(input_size, 128)
         self.fc2 = nn.Linear(128, 256)
         self.fc3 = nn.Linear(256, 128)
         self.fc4 = nn.Linear(128, output_size)
+
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
+    
 class ReplayMemory:
+
     def __init__(self, capacity):
         self.memory = deque(maxlen=capacity)
+
     def push(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
+
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
+    
     def __len__(self):
         return len(self.memory)
+    
 class Environment:
+
     def __init__(self):
         self.camera_offset = [0, 0]
         self.laps_completed = 0
         self.checkpoint_radius = 80
         self.last_checkpoint_time = 0
         self.checkpoint_cooldown = 2000
-        self.backward_distance = 0
-        self.backward_threshold = 200
-        try:
-            self.stone_img = pygame.image.load("stone.png")
-            self.stone_img = pygame.transform.scale(self.stone_img, (30, 30))
-        except:
-            self.stone_img = None
-        self.stones = []
         self.reset()
-    def generate_stones(self):
-        self.stones = []
-        road_length = len(self.outer_points)
-        num_stones = road_length // 50 + random.randint(0, 4)
-        for _ in range(num_stones):
-            segment_idx = random.randint(0, len(self.outer_points) - 2)
-            outer_point = self.outer_points[segment_idx]
-            inner_point = self.inner_points[segment_idx]
-            t = random.random()
-            stone_x = inner_point[0] + t * (outer_point[0] - inner_point[0])
-            stone_y = inner_point[1] + t * (outer_point[1] - inner_point[1])
-            self.stones.append((stone_x, stone_y))
+        
     def generate_road(self):
         outer_points = []
         inner_points = []
@@ -91,6 +86,7 @@ class Environment:
         variation_noise_offset = random.uniform(0, 100)
         base_radius_variation = random.uniform(0.8, 1.2)
         base_radius = RADIUS * base_radius_variation
+
         for i in range(POINTS + 1):
             angle = 2 * math.pi * i / POINTS
             primary_noise = pnoise1((i * 0.1 + base_noise_offset)) * 60
@@ -102,33 +98,43 @@ class Environment:
             if random.random() < 0.1:
                 bulge = random.uniform(-30, 30)
                 combined_noise += bulge
+
             current_radius = base_radius + combined_noise
             current_radius = max(current_radius, ROAD_WIDTH * 2)
+
             outer_x = CENTER[0] + (current_radius + ROAD_WIDTH / 2) * math.cos(angle)
             outer_y = CENTER[1] + (current_radius + ROAD_WIDTH / 2) * math.sin(angle)
             outer_points.append((outer_x, outer_y))
+
             inner_x = CENTER[0] + (current_radius - ROAD_WIDTH / 2) * math.cos(angle)
             inner_y = CENTER[1] + (current_radius - ROAD_WIDTH / 2) * math.sin(angle)
             inner_points.append((inner_x, inner_y))
+
         outer_points[-1] = outer_points[0]
         inner_points[-1] = inner_points[0]
+
         smoothed_outer = []
         smoothed_inner = []
+
         for i in range(len(outer_points)):
             prev_i = (i - 1) % (len(outer_points) - 1)
             next_i = (i + 1) % (len(outer_points) - 1)
+
             smooth_outer_x = (outer_points[prev_i][0] + outer_points[i][0] + outer_points[next_i][0]) / 3
             smooth_outer_y = (outer_points[prev_i][1] + outer_points[i][1] + outer_points[next_i][1]) / 3
             smoothed_outer.append((smooth_outer_x, smooth_outer_y))
+
             smooth_inner_x = (inner_points[prev_i][0] + inner_points[i][0] + inner_points[next_i][0]) / 3
             smooth_inner_y = (inner_points[prev_i][1] + inner_points[i][1] + inner_points[next_i][1]) / 3
             smoothed_inner.append((smooth_inner_x, smooth_inner_y))
+
         smoothed_outer[-1] = smoothed_outer[0]
         smoothed_inner[-1] = smoothed_inner[0]
+
         return smoothed_outer, smoothed_inner
+
     def reset(self):
         self.outer_points, self.inner_points = self.generate_road()
-        self.generate_stones()
         start_angle = random.uniform(0, 2 * math.pi)
         self.spawn_point = [
             CENTER[0] + RADIUS * math.cos(start_angle),
@@ -140,18 +146,8 @@ class Environment:
         self.steps = 0
         self.laps_completed = 0
         self.last_checkpoint_time = pygame.time.get_ticks()
-        self.backward_distance = 0
         self.update_camera()
         return self.get_state()
-    def check_collision_with_stones(self):
-        car_radius = 15
-        stone_radius = 15
-        for stone_pos in self.stones:
-            distance = math.sqrt((self.car_pos[0] - stone_pos[0])**2 +
-                               (self.car_pos[1] - stone_pos[1])**2)
-            if distance < (car_radius + stone_radius):
-                return True
-        return False
     def check_checkpoint(self):
         current_time = pygame.time.get_ticks()
         distance = math.sqrt((self.car_pos[0] - self.spawn_point[0])**2 +
@@ -176,7 +172,6 @@ class Environment:
         return (pos[0] + self.camera_offset[0], pos[1] + self.camera_offset[1])
     def cast_rays(self):
         ray_distances = []
-        stone_distances = []
         ray_angles = [i * 45 for i in range(8)]
         for angle in ray_angles:
             ray_angle = math.radians(self.car_angle + angle)
@@ -202,29 +197,7 @@ class Environment:
                             py = y1 + t * (y2 - y1)
                             distance = math.sqrt((px - x1)**2 + (py - y1)**2)
                             min_distance = min(min_distance, distance)
-            min_stone_distance = RAY_LENGTH
-            for stone_pos in self.stones:
-                stone_radius = 15
-                dx = stone_pos[0] - self.car_pos[0]
-                dy = stone_pos[1] - self.car_pos[1]
-                ray_dx = ray_end[0] - self.car_pos[0]
-                ray_dy = ray_end[1] - self.car_pos[1]
-                ray_length = math.sqrt(ray_dx**2 + ray_dy**2)
-                ray_dx /= ray_length
-                ray_dy /= ray_length
-                dot_product = dx * ray_dx + dy * ray_dy
-                closest_x = self.car_pos[0] + dot_product * ray_dx
-                closest_y = self.car_pos[1] + dot_product * ray_dy
-                if 0 <= dot_product <= RAY_LENGTH:
-                    closest_dx = closest_x - stone_pos[0]
-                    closest_dy = closest_y - stone_pos[1]
-                    closest_distance = math.sqrt(closest_dx**2 + closest_dy**2)
-                    if closest_distance <= stone_radius:
-                        distance_to_stone = math.sqrt((closest_x - self.car_pos[0])**2 +
-                                                    (closest_y - self.car_pos[1])**2)
-                        min_stone_distance = min(min_stone_distance, distance_to_stone)
             ray_distances.append(min_distance / RAY_LENGTH)
-            stone_distances.append(min_stone_distance / RAY_LENGTH)
             if pygame.display.get_surface():
                 ray_end = (
                     self.car_pos[0] + min_distance * math.cos(ray_angle),
@@ -233,19 +206,11 @@ class Environment:
                 start_screen = self.world_to_screen(self.car_pos)
                 end_screen = self.world_to_screen(ray_end)
                 pygame.draw.line(screen, YELLOW, start_screen, end_screen, 2)
-                if min_stone_distance < RAY_LENGTH:
-                    stone_ray_end = (
-                        self.car_pos[0] + min_stone_distance * math.cos(ray_angle),
-                        self.car_pos[1] + min_stone_distance * math.sin(ray_angle)
-                    )
-                    stone_end_screen = self.world_to_screen(stone_ray_end)
-                    pygame.draw.line(screen, RED, start_screen, stone_end_screen, 1)
-        return ray_distances, stone_distances
+        return ray_distances
     def get_state(self):
-        track_distances, stone_distances = self.cast_rays()
-        return np.array(track_distances + stone_distances + [self.car_speed / 5.0])
+        ray_distances = self.cast_rays()
+        return np.array(ray_distances + [self.car_speed / 5.0])
     def step(self, action):
-        previous_pos = self.car_pos.copy()
         if action == 1:
             self.car_speed = min(self.car_speed + 0.2, 5)
         elif action == 2:
@@ -254,36 +219,26 @@ class Environment:
             self.car_angle -= 3 if self.car_speed > 0 else -3
         elif action == 4:
             self.car_angle += 3 if self.car_speed > 0 else -3
+
         self.car_speed *= 0.98
         self.car_pos[0] += self.car_speed * math.cos(math.radians(self.car_angle))
         self.car_pos[1] += self.car_speed * math.sin(math.radians(self.car_angle))
-        movement_vector = [
-            self.car_pos[0] - previous_pos[0],
-            self.car_pos[1] - previous_pos[1]
-        ]
-        movement_angle = math.degrees(math.atan2(movement_vector[1], movement_vector[0]))
-        relative_angle = (movement_angle - self.car_angle) % 360
-        if relative_angle > 90 and relative_angle < 270:
-            distance_moved = math.sqrt(movement_vector[0]**2 + movement_vector[1]**2)
-            self.backward_distance += distance_moved
-        else:
-            self.backward_distance = max(0, self.backward_distance - 1)
         self.update_camera()
+
         inside_road = self.is_inside_road(self.car_pos[0], self.car_pos[1])
-        hit_stone = self.check_collision_with_stones()
         reward = 1 if inside_road else -100
         reward += self.car_speed * 0.1
-        if self.backward_distance > self.backward_threshold:
-            reward -= (self.backward_distance - self.backward_threshold) * 0.1
-        if hit_stone:
-            reward -= 50
+        
         self.steps += 1
-        done = not inside_road or hit_stone or self.steps >= MAX_STEPS
+        done = not inside_road or self.steps >= MAX_STEPS
+        
+        # Get the next state
         next_state = self.get_state()
+
+        # Check checkpoint and add reward if completed
         if self.check_checkpoint():
             reward += 100
-            self.generate_stones()
-            self.backward_distance = 0
+
         return next_state, reward, done
     def is_inside_road(self, x, y):
         point = pygame.math.Vector2(x, y)
@@ -305,13 +260,6 @@ class Environment:
         pygame.draw.polygon(screen, GRAY, road_points)
         pygame.draw.lines(screen, DARK_GRAY, True, [self.world_to_screen(p) for p in self.outer_points], 3)
         pygame.draw.lines(screen, DARK_GRAY, True, [self.world_to_screen(p) for p in self.inner_points], 3)
-        for stone_pos in self.stones:
-            stone_screen_pos = self.world_to_screen(stone_pos)
-            if self.stone_img:
-                stone_rect = self.stone_img.get_rect(center=stone_screen_pos)
-                screen.blit(self.stone_img, stone_rect)
-            else:
-                pygame.draw.circle(screen, DARK_GRAY, stone_screen_pos, 15)
         spawn_screen = self.world_to_screen(self.spawn_point)
         pygame.draw.circle(screen, RED, spawn_screen, self.checkpoint_radius, 3)
         pygame.draw.line(screen, RED,
@@ -342,36 +290,21 @@ class Environment:
         pygame.display.flip()
 def load_model(filename):
     if os.path.exists(filename):
-        new_model = DeepQNetwork(17, 5)
-        try:
-            state_dict = torch.load(filename)
-            new_model.load_state_dict(state_dict)
-            print("Loaded existing model")
-        except:
-            print("Error loading existing model - incompatible architecture")
-            print("Creating new model with enhanced state space")
-        return new_model
+        model = DeepQNetwork(9, 5)
+        model.load_state_dict(torch.load(filename))
+        model.eval()
+        return model
     return None
 def train(continue_training=False):
     env = Environment()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if continue_training and os.path.exists("car_model.pth"):
-        try:
-            policy_net = DeepQNetwork(17, 5).to(device)
-            state_dict = torch.load("car_model.pth")
-            new_state_dict = policy_net.state_dict()
-            for key in new_state_dict:
-                if key in state_dict and 'fc1' not in key:
-                    new_state_dict[key] = state_dict[key]
-            policy_net.load_state_dict(new_state_dict)
-            print("Loaded and adapted existing model")
-        except:
-            policy_net = DeepQNetwork(17, 5).to(device)
-            print("Created new model due to incompatible architecture")
+        policy_net = load_model("car_model.pth").to(device)
+        print("Loaded existing model")
     else:
-        policy_net = DeepQNetwork(17, 5).to(device)
+        policy_net = DeepQNetwork(9, 5).to(device)
         print("Created new model")
-    target_net = DeepQNetwork(17, 5).to(device)
+    target_net = DeepQNetwork(9, 5).to(device)
     target_net.load_state_dict(policy_net.state_dict())
     optimizer = torch.optim.Adam(policy_net.parameters(), lr=0.001)
     memory = ReplayMemory(50000)
